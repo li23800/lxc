@@ -100,11 +100,11 @@ jobs:
         export KBUILD_BUILD_HOST=LineageOS
         export KBUILD_BUILD_USER=android-build
 
-    # 第一步：先编译内核自带的原生DTC（关键！确保原生DTC可用）
+          # 第一先编译内核自带的原生DTC（关键！确保原生DTC可用）
         make -j1 ARCH=arm64 O=out scripts_dtc
 
-    # 第二步：加载内核配置
-        make ARCH=arm64 O=out ${{ env.KERNEL_CONFIG }}
+          # 第二步：加载内核配置
+        
     - name: 开始编译内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
