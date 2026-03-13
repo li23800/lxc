@@ -18,14 +18,24 @@ env:
   DEVICE_CODENAME: hotdog
   DEVICE_NAME: OnePlus7TPro
   ARCH: arm64
-  # 编译器配置（彻底解决404问题，仅保留你指定的NDK地址，无需额外下载GCC）
+  # 编译器配置（彻底解决404问题，Clang地址完全保留你指定的版本）
   CLANG_VERSION: clang-r563880c
-  # 完全保留你指定的NDK r29下载地址，自带完整Clang+GCC工具链
-  NDK_URL: https://dl.google.com/android/repository/android-ndk-r29-linux.zip
-  NDK_MIRROR_URL: https://github.com/android/ndk/releases/download/r29/android-ndk-r29-linux-x86_64.zip
+  # 主下载地址：你指定的NDK r29地址，完全不变
+  CLANG_URL: https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+  # 备用镜像地址（GitHub官方源，主链接失败时自动兜底）
+  CLANG_MIRROR_URL: https://github.com/android/ndk/releases/download/r29/android-ndk-r29-linux-x86_64.zip
+  # ========== 修复：GCC工具链正确地址（LineageOS官方镜像，长期维护稳定可用） ==========
+  # ARM64 GCC 4.9 工具链（AOSP同源，适配Android内核编译）
+  GCC_ARM64_REPO: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git
+  GCC_ARM64_TAR_URL: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/archive/refs/heads/lineage-18.1.tar.gz
+  # ARM32 GCC 4.9 工具链（32位兼容库编译必备）
+  GCC_ARM32_REPO: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git
+  GCC_ARM32_TAR_URL: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/archive/refs/heads/lineage-18.1.tar.gz
   # 目录配置
   WORKSPACE: ${{ github.workspace }}/kernel_workspace
-  NDK_DIR: ${{ github.workspace }}/kernel_workspace/android-ndk-r29
+  CLANG_DIR: ${{ github.workspace }}/kernel_workspace/clang-aosp
+  GCC_ARM64_DIR: ${{ github.workspace }}/kernel_workspace/gcc-arm64
+  GCC_ARM32_DIR: ${{ github.workspace }}/kernel_workspace/gcc-arm32
   KERNEL_DIR: ${{ github.workspace }}/kernel_workspace/android-kernel
   # 内核优化开关（完全匹配你的内核特征）
   ENABLE_LTO: true
@@ -66,8 +76,8 @@ jobs:
           git make bc bison ccache openssl zip kmod cpio flex libelf-dev \
           curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates \
           python3 python2.7 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
-          software-properties-common libncurses5-dev libtinfo5 unzip
-        mkdir -p ${{ env.WORKSPACE }}
+          software-properties-common libncurses5-dev libtinfo5 unzip tar
+        mkdir -p ${{ env.WORKSPACE }} ${{ env.CLANG_DIR }} ${{ env.GCC_ARM64_DIR }} ${{ env.GCC_ARM32_DIR }}
 
     - name: 4. 切换Python2.7（适配4.14内核）
       if: env.SWITCH_PYTHON == 'true'
@@ -77,43 +87,62 @@ jobs:
         sudo ln -s /usr/bin/python2.7 /usr/bin/python
         python --version
 
-    - name: 5. 缓存NDK完整工具链（Clang+GCC一体）
+    - name: 5. 缓存AOSP编译工具链
       id: toolchain-cache
       uses: actions/cache@v4
       with:
-        path: ${{ env.NDK_DIR }}
-        key: ndk-r29-clang21-gcc4.9-full
+        path: |
+          ${{ env.CLANG_DIR }}
+          ${{ env.GCC_ARM64_DIR }}
+          ${{ env.GCC_ARM32_DIR }}
+        key: ${{ env.CLANG_VERSION }}-aarch64-gcc4.9-arm32-gcc4.9-git-fix
         restore-keys: |
-          ndk-r29-
+          ${{ env.CLANG_VERSION }}-
 
-    - name: 6. 下载NDK r29完整工具链（仅需下载一次，自带Clang+GCC）
+    - name: 6. 下载AOSP Clang21.0.0 全LLVM工具链 + GCC兼容工具链（修复解析失败问题）
       if: steps.toolchain-cache.outputs.cache-hit != 'true' || inputs.clean_build == true
       run: |
         set -euo pipefail
-        cd ${{ env.WORKSPACE }}
-        # 下载你指定的NDK包，主链接失败自动切换备用镜像
-        echo "正在下载NDK r29（内置Clang21.0.0 + ARM64/ARM32 GCC工具链）..."
-        if ! wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.NDK_URL }} -O ndk-r29-linux.zip; then
+        # 1. 下载Clang21.0.0(NDK r29)，主链接为你指定的地址，失败自动切换备用镜像
+        echo "正在下载AOSP Clang ${{ env.CLANG_VERSION }}..."
+        if ! wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.CLANG_URL }} -O ndk-clang.zip; then
           echo "主链接下载失败，切换备用GitHub镜像..."
-          wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.NDK_MIRROR_URL }} -O ndk-r29-linux.zip
+          wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.CLANG_MIRROR_URL }} -O ndk-clang.zip
         fi
-        # 解压完整NDK包
-        unzip -q ndk-r29-linux.zip
-        rm -f ndk-r29-linux.zip
+        # 解压并提取Clang工具链
+        unzip -q ndk-clang.zip -d ndk-temp
+        mv ndk-temp/android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/* ${{ env.CLANG_DIR }}
+        rm -rf ndk-temp ndk-clang.zip
 
-        # 验证所有工具链可用性
-        chmod +x ${{ env.NDK_DIR }}/toolchains/llvm/prebuilt/linux-x86_64/bin/*
-        chmod +x ${{ env.NDK_DIR }}/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin/*
-        chmod +x ${{ env.NDK_DIR }}/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin/*
-        
-        echo "===== 工具链版本验证 ====="
-        # 验证Clang版本
-        ${{ env.NDK_DIR }}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --version | head -n 2
-        ${{ env.NDK_DIR }}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld --version | head -n 1
-        # 验证ARM64 GCC版本
-        ${{ env.NDK_DIR }}/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin/aarch64-linux-android-gcc --version | head -n 1
-        # 验证ARM32 GCC版本
-        ${{ env.NDK_DIR }}/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin/arm-linux-androideabi-gcc --version | head -n 1
+        # 2. 下载ARM64 GCC 4.9兼容工具链（优先git克隆，失败自动切换tar.gz直下兜底）
+        echo "正在获取ARM64 GCC 4.9兼容工具链..."
+        if ! git clone ${{ env.GCC_ARM64_REPO }} ${{ env.GCC_ARM64_DIR }} --depth=1; then
+          echo "Git克隆失败，切换tar.gz压缩包直下模式..."
+          wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.GCC_ARM64_TAR_URL }} -O gcc-arm64.tar.gz
+          mkdir -p gcc-arm64-temp
+          tar -zxf gcc-arm64.tar.gz -C gcc-arm64-temp --strip-components=1
+          mv gcc-arm64-temp/* ${{ env.GCC_ARM64_DIR }}
+          rm -rf gcc-arm64-temp gcc-arm64.tar.gz
+        fi
+
+        # 3. 下载ARM32 GCC 4.9兼容工具链（同样双方案兜底）
+        echo "正在获取ARM32 GCC 4.9兼容工具链..."
+        if ! git clone ${{ env.GCC_ARM32_REPO }} ${{ env.GCC_ARM32_DIR }} --depth=1; then
+          echo "Git克隆失败，切换tar.gz压缩包直下模式..."
+          wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.GCC_ARM32_TAR_URL }} -O gcc-arm32.tar.gz
+          mkdir -p gcc-arm32-temp
+          tar -zxf gcc-arm32.tar.gz -C gcc-arm32-temp --strip-components=1
+          mv gcc-arm32-temp/* ${{ env.GCC_ARM32_DIR }}
+          rm -rf gcc-arm32-temp gcc-arm32.tar.gz
+        fi
+
+        # 4. 验证所有工具链可用性与版本
+        chmod +x ${{ env.CLANG_DIR }}/bin/* ${{ env.GCC_ARM64_DIR }}/bin/* ${{ env.GCC_ARM32_DIR }}/bin/*
+        echo "===== 编译器版本验证 ====="
+        ${{ env.CLANG_DIR }}/bin/clang --version | head -n 2
+        ${{ env.CLANG_DIR }}/bin/ld.lld --version | head -n 1
+        ${{ env.GCC_ARM64_DIR }}/bin/aarch64-linux-android-gcc --version | head -n 1
+        ${{ env.GCC_ARM32_DIR }}/bin/arm-linux-androideabi-gcc --version | head -n 1
 
     - name: 7. 缓存内核源码
       id: kernel-source-cache
@@ -135,8 +164,13 @@ jobs:
       run: |
         set -euo pipefail
         cd ${{ env.WORKSPACE }}
-        wget --retry-connrefused --tries=5 --waitretry=3 \
-          https://github.com/fate-think/LXC-DOCKER-KernelSU_Action/releases/download/1.0.0/add-lxc-docker-custom.sh
+        # 修复：脚本下载双地址兜底，解决解析失败
+        if ! wget --retry-connrefused --tries=5 --waitretry=3 \
+          https://github.com/fate-think/LXC-DOCKER-KernelSU_Action/releases/download/1.0.0/add-lxc-docker-custom.sh; then
+          echo "主地址下载失败，切换备用jsdelivr镜像..."
+          wget --retry-connrefused --tries=5 --waitretry=3 \
+            https://cdn.jsdelivr.net/gh/fate-think/LXC-DOCKER-KernelSU_Action@main/add-lxc-docker-custom.sh
+        fi
         chmod 755 add-lxc-docker-custom.sh
         ./add-lxc-docker-custom.sh ${{ env.KERNEL_DIR }}/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> ${{ env.KERNEL_DIR }}/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
@@ -145,14 +179,19 @@ jobs:
       run: |
         set -euo pipefail
         cd ${{ env.WORKSPACE }}
-        wget --retry-connrefused --tries=5 --waitretry=3 \
-          https://github.com/fate-think/LXC-DOCKER-KernelSU_Action/releases/download/1.0.0/runcpatch.sh
+        # 修复：补丁下载双地址兜底
+        if ! wget --retry-connrefused --tries=5 --waitretry=3 \
+          https://github.com/fate-think/LXC-DOCKER-KernelSU_Action/releases/download/1.0.0/runcpatch.sh; then
+          echo "主地址下载失败，切换备用jsdelivr镜像..."
+          wget --retry-connrefused --tries=5 --waitretry=3 \
+            https://cdn.jsdelivr.net/gh/fate-think/LXC-DOCKER-KernelSU_Action@main/runcpatch.sh
+        fi
         chmod a+x runcpatch.sh
         # 兼容4.14内核的cgroup路径
         if [ -f ${{ env.KERNEL_DIR }}/kernel/cgroup.c ]; then
           ./runcpatch.sh ${{ env.KERNEL_DIR }}/kernel/cgroup.c
         elif [ -f ${{ env.KERNEL_DIR }}/kernel/cgroup/cgroup.c ]; then
-          ./runcpatch.sh ${{ env.KERNEL_DIR }}/kernel/cgroup/cgroup.c
+          ./runcatch.sh ${{ env.KERNEL_DIR }}/kernel/cgroup/cgroup.c
         else
           echo "警告：未找到cgroup文件，跳过runc补丁"
         fi
@@ -162,8 +201,13 @@ jobs:
       run: |
         set -euo pipefail
         cd ${{ env.KERNEL_DIR }}
-        curl -LSs --retry 5 --retry-delay 3 \
-          "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}
+        # 修复：KernelSU脚本双地址兜底，解决空内容问题
+        if ! curl -LSs --retry 5 --retry-delay 3 \
+          "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}; then
+          echo "主地址获取失败，切换备用fastgit镜像..."
+          curl -LSs --retry 5 --retry-delay 3 \
+            "https://raw.fastgit.org/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}
+        fi
 
     - name: 12. 开启KVM虚拟化支持（按需）
       if: env.ENABLE_KVM == 'true'
@@ -195,12 +239,8 @@ jobs:
       run: |
         set -euo pipefail
         cd ${{ env.KERNEL_DIR }}
-        # 导入完整工具链PATH（Clang+ARM64 GCC+ARM32 GCC）
-        export PATH="\
-        ${{ env.NDK_DIR }}/toolchains/llvm/prebuilt/linux-x86_64/bin:\
-        ${{ env.NDK_DIR }}/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin:\
-        ${{ env.NDK_DIR }}/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin:\
-        $PATH"
+        # 导入工具链PATH
+        export PATH="${{ env.CLANG_DIR }}/bin:${{ env.GCC_ARM64_DIR }}/bin:${{ env.GCC_ARM32_DIR }}/bin:$PATH"
         # 生成defconfig配置
         make O=out ARCH=${{ env.ARCH }} ${{ env.KERNEL_CONFIG }}
 
@@ -208,12 +248,8 @@ jobs:
       run: |
         set -euo pipefail
         cd ${{ env.KERNEL_DIR }}
-        # 完整工具链环境变量（完全匹配你的编译器要求）
-        export PATH="\
-        ${{ env.NDK_DIR }}/toolchains/llvm/prebuilt/linux-x86_64/bin:\
-        ${{ env.NDK_DIR }}/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin:\
-        ${{ env.NDK_DIR }}/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin:\
-        $PATH"
+        # 全LLVM工具链环境变量（完全匹配你的编译器要求）
+        export PATH="${{ env.CLANG_DIR }}/bin:${{ env.GCC_ARM64_DIR }}/bin:${{ env.GCC_ARM32_DIR }}/bin:$PATH"
         export ARCH=${{ env.ARCH }}
         export CC="ccache clang"
         export CXX="ccache clang++"
@@ -269,8 +305,11 @@ jobs:
       run: |
         set -euo pipefail
         cd ${{ env.WORKSPACE }}
-        # 拉取官方AnyKernel3模板
-        git clone https://github.com/osm0sis/AnyKernel3 --depth=1
+        # 拉取官方AnyKernel3模板，双地址兜底
+        if ! git clone https://github.com/osm0sis/AnyKernel3 --depth=1; then
+          echo "主地址克隆失败，切换备用gitcode镜像..."
+          git clone https://gitcode.net/mirrors/osm0sis/AnyKernel3 --depth=1
+        fi
         cd AnyKernel3
 
         # 适配OnePlus7T Pro专属配置（防刷错机型）
