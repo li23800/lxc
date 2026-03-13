@@ -93,7 +93,18 @@ jobs:
       with:
         key: build-kernel-mido-kernel
         max-size: 2G
+    - name: 编译内核+设备树（强制原生DTC，根治语法报错）
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-zyc/bin:$PATH
+        export KBUILD_BUILD_HOST=LineageOS
+        export KBUILD_BUILD_USER=android-build
 
+    # 第一步：先编译内核自带的原生DTC（关键！确保原生DTC可用）
+        make -j1 ARCH=arm64 O=out scripts_dtc
+
+    # 第二步：加载内核配置
+        make ARCH=arm64 O=out ${{ env.KERNEL_CONFIG }}
     - name: 开始编译内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
