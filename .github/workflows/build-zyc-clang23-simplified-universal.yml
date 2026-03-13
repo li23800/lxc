@@ -94,7 +94,15 @@ jobs:
         key: build-kernel-mido-kernel
         max-size: 2G
     
-        
+    - name: 禁用报错的mtp-overlay dtbo编译
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          # 找到并注释掉sm8150-mtp-overlay.dtbo的编译规则
+        find arch/arm64/boot/dts/ -name "Makefile" -type f -exec sed -i 's/sm8150-mtp-overlay.dtbo//g' {} \;
+          # 确认已经移除，不会再编译这个文件
+        echo "===== 剩余dtbo编译列表 ====="
+        grep -r "dtbo" arch/arm64/boot/dts/*/Makefile | grep -v "#"
+    
     - name: 开始编译内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
