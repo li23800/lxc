@@ -88,11 +88,8 @@ jobs:
          echo "CONFIG_VHOST_NET=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
          echo "CONFIG_VHOST_CROSS_ENDIAN_LEGACY=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
                
-    - name: 设置ccache缓存
-      uses: hendrikmuhs/ccache-action@v1.2
-      with:
-        key: build-kernel-mido-kernel
-        max-size: 2G
+    
+    
     
     
     
