@@ -1,6 +1,5 @@
-name: 高端机 阿菌未霜clang18
+name: OnePlus7TPro 内核编译 | AOSP Clang21.0.0
 on:
-  # 支持手动触发
   workflow_dispatch:
     inputs:
       clean_build:
@@ -14,11 +13,33 @@ on:
         default: true
         type: boolean
 
+env:
+  # ========== 核心固定配置（适配你的OnePlus7T Pro） ==========
+  DEVICE_CODENAME: hotdog
+  DEVICE_NAME: OnePlus7TPro
+  ARCH: arm64
+  # 编译器配置（完全匹配你的内核参数）
+  CLANG_VERSION: clang-r563880c
+  CLANG_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r563880c.tar.gz
+  GCC_ARM64_URL: https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/main.tar.gz
+  GCC_ARM32_URL: https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/heads/main.tar.gz
+  # 目录配置
+  WORKSPACE: ${{ github.workspace }}/kernel_workspace
+  CLANG_DIR: ${{ github.workspace }}/kernel_workspace/clang-aosp
+  GCC_ARM64_DIR: ${{ github.workspace }}/kernel_workspace/gcc-arm64
+  GCC_ARM32_DIR: ${{ github.workspace }}/kernel_workspace/gcc-arm32
+  KERNEL_DIR: ${{ github.workspace }}/kernel_workspace/android-kernel
+  # 内核优化开关（完全匹配你的内核特征）
+  ENABLE_LTO: true
+  ENABLE_PGO: false
+  ENABLE_MLGO: false
+  PGO_PROFDATA_PATH: ${{ github.workspace }}/kernel_pgo.profdata
+  # ========== 可配置项（从config.env读取，无需修改此处） ==========
+
 jobs:
   build:
     name: 内核编译构建
     runs-on: ubuntu-22.04
-    # 仅仓库所有者可触发
     if: github.event.repository.owner.id == github.event.sender.id
     
     steps:
@@ -27,30 +48,30 @@ jobs:
       with:
         fetch-depth: 1
 
-    - name: 2. 全局环境变量导入
+    - name: 2. 导入config.env配置
       run: |
         set -euo pipefail
-        # 一次性导入config.env中的所有配置，避免重复cat
+        # 导入用户自定义配置
         grep -E '^(KERNEL_SOURCE|KERNEL_SOURCE_BRANCH|KERNEL_CONFIG|KERNEL_ZIP_NAME|LLVM_CONFIG|KERNEL_IMAGE_NAME|NEED_DTBO|SWITCH_PYTHON|ENABLE_KVM|ENABLE_LXC_DOCKER|ENABLE_KERNELSU|KERNELSU_TAG)=' config.env >> $GITHUB_ENV
-        # 固定编译环境配置
-        echo "WORKSPACE=${{ github.workspace }}/kernel_workspace" >> $GITHUB_ENV
-        echo "CLANG_DIR=${{ github.workspace }}/kernel_workspace/clang-mandi-sa" >> $GITHUB_ENV
-        echo "KERNEL_DIR=${{ github.workspace }}/kernel_workspace/android-kernel" >> $GITHUB_ENV
+        # 固定设备配置
+        echo "DEVICE_CODENAME=${{ env.DEVICE_CODENAME }}" >> $GITHUB_ENV
+        echo "ARCH=${{ env.ARCH }}" >> $GITHUB_ENV
 
     - name: 3. 安装编译依赖环境
       run: |
         set -euo pipefail
-        # 启用universe仓库，确保ubuntu22.04可正常安装python2.7
+        # 启用universe仓库，兼容Python2.7
         sudo add-apt-repository universe -y
         sudo apt-get update -y
+        # 安装全量依赖，适配AOSP Clang21与4.14内核
         sudo -E apt-get -y -qq install --no-install-recommends \
           git make bc bison ccache openssl zip kmod cpio flex libelf-dev \
           curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates \
           python3 python2.7 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
-          software-properties-common
-        mkdir -p ${{ env.WORKSPACE }}
+          software-properties-common libncurses5-dev libtinfo5
+        mkdir -p ${{ env.WORKSPACE }} ${{ env.CLANG_DIR }} ${{ env.GCC_ARM64_DIR }} ${{ env.GCC_ARM32_DIR }}
 
-    - name: 4. 切换Python2.7（按需）
+    - name: 4. 切换Python2.7（适配4.14内核）
       if: env.SWITCH_PYTHON == 'true'
       run: |
         set -euo pipefail
@@ -58,33 +79,56 @@ jobs:
         sudo ln -s /usr/bin/python2.7 /usr/bin/python
         python --version
 
-    - name: 5. 缓存Clang编译器（避免重复下载）
-      id: clang-cache
+    - name: 5. 缓存AOSP编译工具链
+      id: toolchain-cache
       uses: actions/cache@v4
       with:
-        path: ${{ env.CLANG_DIR }}
-        key: mandi-sa-clang18-amd64-kernel-arm
+        path: |
+          ${{ env.CLANG_DIR }}
+          ${{ env.GCC_ARM64_DIR }}
+          ${{ env.GCC_ARM32_DIR }}
+        key: ${{ env.CLANG_VERSION }}-aarch64-gcc4.9-arm32-gcc4.9
         restore-keys: |
-          mandi-sa-clang18-
+          ${{ env.CLANG_VERSION }}-
 
-    - name: 6. 下载阿菌未霜Clang18编译器
-      if: steps.clang-cache.outputs.cache-hit != 'true' || inputs.clean_build == true
+    - name: 6. 下载AOSP Clang21.0.0 全LLVM工具链
+      if: steps.toolchain-cache.outputs.cache-hit != 'true' || inputs.clean_build == true
       run: |
         set -euo pipefail
-        git clone https://codeberg.org/Mandi-Sa/clang --depth=1 -b amd64-kernel-arm ${{ env.CLANG_DIR }}
-        # 验证编译器可用性
-        ${{ env.CLANG_DIR }}/bin/clang --version | head -n 2
+        # 下载并解压Clang21.0.0(r563880c)
+        echo "正在下载AOSP Clang ${{ env.CLANG_VERSION }}..."
+        wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.CLANG_URL }} -O clang.tar.gz
+        tar -xzf clang.tar.gz -C ${{ env.CLANG_DIR }}
+        rm -f clang.tar.gz
 
-    - name: 7. 缓存内核源码（加速重复编译）
+        # 下载并解压ARM64 GCC兼容工具链
+        echo "正在下载ARM64 GCC兼容工具链..."
+        wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.GCC_ARM64_URL }} -O gcc-arm64.tar.gz
+        tar -xzf gcc-arm64.tar.gz -C ${{ env.GCC_ARM64_DIR }}
+        rm -f gcc-arm64.tar.gz
+
+        # 下载并解压ARM32 GCC兼容工具链
+        echo "正在下载ARM32 GCC兼容工具链..."
+        wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.GCC_ARM32_URL }} -O gcc-arm32.tar.gz
+        tar -xzf gcc-arm32.tar.gz -C ${{ env.GCC_ARM32_DIR }}
+        rm -f gcc-arm32.tar.gz
+
+        # 验证编译器可用性与版本
+        chmod +x ${{ env.CLANG_DIR }}/bin/*
+        echo "===== 编译器版本验证 ====="
+        ${{ env.CLANG_DIR }}/bin/clang --version | head -n 2
+        ${{ env.CLANG_DIR }}/bin/ld.lld --version | head -n 1
+
+    - name: 7. 缓存内核源码
       id: kernel-source-cache
       uses: actions/cache@v4
       with:
         path: ${{ env.KERNEL_DIR }}
-        key: kernel-source-${{ env.KERNEL_SOURCE }}-${{ env.KERNEL_SOURCE_BRANCH }}
+        key: kernel-source-${{ env.DEVICE_CODENAME }}-${{ env.KERNEL_SOURCE_BRANCH }}
         restore-keys: |
-          kernel-source-${{ env.KERNEL_SOURCE }}-
+          kernel-source-${{ env.DEVICE_CODENAME }}-
 
-    - name: 8. 拉取内核源码
+    - name: 8. 拉取OnePlus7T Pro内核源码
       if: steps.kernel-source-cache.outputs.cache-hit != 'true' || inputs.clean_build == true
       run: |
         set -euo pipefail
@@ -95,11 +139,9 @@ jobs:
       run: |
         set -euo pipefail
         cd ${{ env.WORKSPACE }}
-        # 添加重试机制，避免网络波动导致下载失败
         wget --retry-connrefused --tries=5 --waitretry=3 \
           https://github.com/fate-think/LXC-DOCKER-KernelSU_Action/releases/download/1.0.0/add-lxc-docker-custom.sh
         chmod 755 add-lxc-docker-custom.sh
-        # 执行配置修改
         ./add-lxc-docker-custom.sh ${{ env.KERNEL_DIR }}/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> ${{ env.KERNEL_DIR }}/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
 
@@ -110,7 +152,7 @@ jobs:
         wget --retry-connrefused --tries=5 --waitretry=3 \
           https://github.com/fate-think/LXC-DOCKER-KernelSU_Action/releases/download/1.0.0/runcpatch.sh
         chmod a+x runcpatch.sh
-        # 兼容不同内核版本的cgroup文件路径
+        # 兼容4.14内核的cgroup路径
         if [ -f ${{ env.KERNEL_DIR }}/kernel/cgroup.c ]; then
           ./runcpatch.sh ${{ env.KERNEL_DIR }}/kernel/cgroup.c
         elif [ -f ${{ env.KERNEL_DIR }}/kernel/cgroup/cgroup.c ]; then
@@ -119,28 +161,15 @@ jobs:
           echo "警告：未找到cgroup文件，跳过runc补丁"
         fi
 
-    - name: 11. Clang18编译兼容性修复
-      run: |
-        set -euo pipefail
-        cd ${{ env.KERNEL_DIR }}
-        # 修复栈保护配置适配clang18
-        sed -i "s/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g" arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-        # 下载并执行clang修复脚本
-        wget --retry-connrefused --tries=5 --waitretry=3 \
-          https://github.com/fate-think/LXC-DOCKER-KernelSU_Action/releases/download/v3.0.0-stable/clangfix3.sh
-        chmod u+x clangfix3.sh
-        ./clangfix3.sh
-
-    - name: 12. 集成KernelSU（按需）
+    - name: 11. 集成KernelSU（按需）
       if: env.ENABLE_KERNELSU == 'true'
       run: |
         set -euo pipefail
         cd ${{ env.KERNEL_DIR }}
-        # 添加curl重试，避免网络问题
         curl -LSs --retry 5 --retry-delay 3 \
           "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}
 
-    - name: 13. 开启KVM虚拟化支持（按需）
+    - name: 12. 开启KVM虚拟化支持（按需）
       if: env.ENABLE_KVM == 'true'
       run: |
         set -euo pipefail
@@ -150,96 +179,119 @@ jobs:
         echo "CONFIG_VHOST_NET=y" >> $CONFIG_FILE
         echo "CONFIG_VHOST_CROSS_ENDIAN_LEGACY=y" >> $CONFIG_FILE
 
+    - name: 13. 高版本Clang编译适配（4.14内核）
+      run: |
+        set -euo pipefail
+        CONFIG_FILE=${{ env.KERNEL_DIR }}/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        # 适配Clang21的栈保护配置
+        sed -i "s/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g" $CONFIG_FILE
+        # 强制开启SMP多核与PREEMPT抢占（匹配你的内核特征）
+        echo "CONFIG_SMP=y" >> $CONFIG_FILE
+        echo "CONFIG_PREEMPT=y" >> $CONFIG_FILE
+
     - name: 14. 配置ccache编译缓存
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: build-kernel-${{ env.KERNEL_CONFIG }}-clang18
+        key: build-kernel-${{ env.DEVICE_CODENAME }}-clang21
         max-size: 3G
 
-    - name: 15. 内核编译配置生成
+    - name: 15. 生成内核编译配置
       run: |
         set -euo pipefail
         cd ${{ env.KERNEL_DIR }}
         # 导入工具链PATH
-        export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
-        # 生成编译配置
-        make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+        export PATH="${{ env.CLANG_DIR }}/bin:${{ env.GCC_ARM64_DIR }}/bin:${{ env.GCC_ARM32_DIR }}/bin:$PATH"
+        # 生成defconfig配置
+        make O=out ARCH=${{ env.ARCH }} ${{ env.KERNEL_CONFIG }}
 
-    - name: 16. 执行内核编译
+    - name: 16. 执行内核编译（全LLVM工具链）
       run: |
         set -euo pipefail
         cd ${{ env.KERNEL_DIR }}
-        # 环境变量配置
-        export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
-        export KBUILD_BUILD_HOST=高端机
-        export KBUILD_BUILD_USER=阿菌未霜
-        export ARCH=arm64
-        export CLANG_TRIPLE=aarch64-linux-gnu-
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+        # 全LLVM工具链环境变量（完全匹配你的编译器要求）
+        export PATH="${{ env.CLANG_DIR }}/bin:${{ env.GCC_ARM64_DIR }}/bin:${{ env.GCC_ARM32_DIR }}/bin:$PATH"
+        export ARCH=${{ env.ARCH }}
         export CC="ccache clang"
         export CXX="ccache clang++"
+        export LD=ld.lld
+        export AR=llvm-ar
+        export NM=llvm-nm
+        export OBJCOPY=llvm-objcopy
+        export OBJDUMP=llvm-objdump
+        export STRIP=llvm-strip
+        export CLANG_TRIPLE=aarch64-linux-gnu-
+        export CROSS_COMPILE=aarch64-linux-android-
+        export CROSS_COMPILE_ARM32=arm-linux-androideabi-
+        export KBUILD_BUILD_HOST=OnePlus7TPro
+        export KBUILD_BUILD_USER=openela-kernel
 
         # 基础编译参数
-        BASE_MAKE_ARGS=(
+        MAKE_ARGS=(
           -j$(nproc --all)
           O=out
-          ARCH=arm64
+          ARCH=${{ env.ARCH }}
           CONFIG_DEBUG_SECTION_MISMATCH=y
-          CLANG_TRIPLE=$CLANG_TRIPLE
-          CROSS_COMPILE=$CROSS_COMPILE
-          CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32
-          CC=$CC
-          CXX=$CXX
+          # 全LLVM工具链强制启用
+          LLVM=1
+          LLVM_IAS=1
         )
 
-        # LLVM全工具链编译适配
-        if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
-          echo "启用LLVM全工具链编译"
-          make "${BASE_MAKE_ARGS[@]}" LLVM=1 LLVM_IAS=1 2>&1 | tee out/build.log
-        else
-          echo "启用混合工具链编译"
-          make "${BASE_MAKE_ARGS[@]}" 2>&1 | tee out/build.log
+        # 内核优化参数（匹配你的LTO/PGO/MLGO特征）
+        if [ "${{ env.ENABLE_LTO }}" = "true" ]; then
+          echo "启用Clang LTO链接时优化"
+          MAKE_ARGS+=(CONFIG_LTO_CLANG=y CONFIG_THINLTO=y)
+        fi
+        if [ "${{ env.ENABLE_PGO }}" = "true" ] && [ -f "${{ env.PGO_PROFDATA_PATH }}" ]; then
+          echo "启用PGO配置文件引导优化"
+          MAKE_ARGS+=(KCFLAGS+=-fprofile-use=${{ env.PGO_PROFDATA_PATH }})
+        fi
+        if [ "${{ env.ENABLE_MLGO }}" = "true" ]; then
+          echo "启用MLGO机器学习引导优化"
+          MAKE_ARGS+=(KCFLAGS+=-mllvm -enable-mlgo=inline)
         fi
 
-        # 验证内核镜像是否生成成功
-        if [ ! -f out/arch/arm64/boot/${{ env.KERNEL_IMAGE_NAME }} ]; then
-          echo "编译失败：未生成内核镜像文件"
+        # 执行编译，保存日志
+        echo "开始编译，线程数：$(nproc --all)"
+        make "${MAKE_ARGS[@]}" 2>&1 | tee out/build.log
+
+        # 编译结果校验
+        if [ ! -f out/arch/${{ env.ARCH }}/boot/${{ env.KERNEL_IMAGE_NAME }} ]; then
+          echo "编译失败：未生成内核镜像，请检查日志"
           exit 1
         fi
-        echo "编译成功，内核镜像已生成"
+        echo "✅ 内核编译成功，镜像已生成"
 
-    - name: 17. 准备AnyKernel3刷入包
+    - name: 17. 制作AnyKernel3刷入包（适配OnePlus7T Pro）
       run: |
         set -euo pipefail
         cd ${{ env.WORKSPACE }}
-        # 拉取AnyKernel3官方模板
+        # 拉取官方AnyKernel3模板
         git clone https://github.com/osm0sis/AnyKernel3 --depth=1
         cd AnyKernel3
 
-        # 适配刷入配置（完全匹配官方规范）
-        sed -i "s/kernel.string=.*/kernel.string=高端机内核 阿菌未霜clang18/g" anykernel.sh
-        sed -i "s/do.devicecheck=1/do.devicecheck=0/g" anykernel.sh
+        # 适配OnePlus7T Pro专属配置（防刷错机型）
+        sed -i "s/kernel.string=.*/kernel.string=OnePlus7TPro OpenELA Kernel | Clang21.0.0/g" anykernel.sh
+        sed -i "s/do.devicecheck=0/do.devicecheck=1/g" anykernel.sh
+        sed -i "s/device.name1=.*/device.name1=${{ env.DEVICE_CODENAME }}/g" anykernel.sh
+        sed -i "s/device.name2=.*/device.name2=${{ env.DEVICE_NAME }}/g" anykernel.sh
         sed -i "s!BLOCK=.*!BLOCK=auto!g" anykernel.sh
         sed -i "s/IS_SLOT_DEVICE=0/IS_SLOT_DEVICE=auto/g" anykernel.sh
         sed -i "s/RAMDISK_COMPRESSION=auto/RAMDISK_COMPRESSION=auto/g" anykernel.sh
 
         # 复制内核镜像
-        cp ${{ env.KERNEL_DIR }}/out/arch/arm64/boot/${{ env.KERNEL_IMAGE_NAME }} ./
+        cp ${{ env.KERNEL_DIR }}/out/arch/${{ env.ARCH }}/boot/${{ env.KERNEL_IMAGE_NAME }} ./
 
         # 复制dtbo镜像（按需）
         if [ "${{ env.NEED_DTBO }}" = "true" ]; then
-          DTBO_PATH=${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dtbo.img
+          DTBO_PATH=${{ env.KERNEL_DIR }}/out/arch/${{ env.ARCH }}/boot/dtbo.img
           if [ -f $DTBO_PATH ]; then
             echo "DTBO_EXIST=true" >> $GITHUB_ENV
             cp $DTBO_PATH ./
           fi
         fi
 
-        # 清理无用文件，减小包体积
-        rm -rf .git* README.md ramdisk modules patch
-
-        # 打包成recovery可直接刷入的zip包
+        # 清理无用文件，打包刷入包
+        rm -rf .git* README.md
         zip -r9 ${{ env.KERNEL_ZIP_NAME }}.zip ./*
 
     - name: 18. 上传内核刷入包
@@ -264,3 +316,4 @@ jobs:
         name: 编译日志
         path: ${{ env.KERNEL_DIR }}/out/build.log
         retention-days: 30
+
