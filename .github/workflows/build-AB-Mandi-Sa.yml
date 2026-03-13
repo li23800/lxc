@@ -18,20 +18,14 @@ env:
   DEVICE_CODENAME: hotdog
   DEVICE_NAME: OnePlus7TPro
   ARCH: arm64
-  # 编译器配置（已按要求替换NDK r29下载地址）
+  # 编译器配置（彻底解决404问题，仅保留你指定的NDK地址，无需额外下载GCC）
   CLANG_VERSION: clang-r563880c
-  # 主下载地址：已替换为你指定的NDK r29地址
-  CLANG_URL: https://dl.google.com/android/repository/android-ndk-r29-linux.zip
-  # 备用镜像地址（GitHub官方源，主链接失败时自动兜底）
-  CLANG_MIRROR_URL: https://github.com/android/ndk/releases/download/r29/android-ndk-r29-linux-x86_64.zip
-  # 备用兼容工具链链接（稳定可访问）
-  GCC_ARM64_URL: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/archive/refs/heads/lineage-20.0.tar.gz
-  GCC_ARM32_URL: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/archive/refs/heads/lineage-20.0.tar.gz
+  # 完全保留你指定的NDK r29下载地址，自带完整Clang+GCC工具链
+  NDK_URL: https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+  NDK_MIRROR_URL: https://github.com/android/ndk/releases/download/r29/android-ndk-r29-linux-x86_64.zip
   # 目录配置
   WORKSPACE: ${{ github.workspace }}/kernel_workspace
-  CLANG_DIR: ${{ github.workspace }}/kernel_workspace/clang-aosp
-  GCC_ARM64_DIR: ${{ github.workspace }}/kernel_workspace/gcc-arm64
-  GCC_ARM32_DIR: ${{ github.workspace }}/kernel_workspace/gcc-arm32
+  NDK_DIR: ${{ github.workspace }}/kernel_workspace/android-ndk-r29
   KERNEL_DIR: ${{ github.workspace }}/kernel_workspace/android-kernel
   # 内核优化开关（完全匹配你的内核特征）
   ENABLE_LTO: true
@@ -73,7 +67,7 @@ jobs:
           curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates \
           python3 python2.7 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
           software-properties-common libncurses5-dev libtinfo5 unzip
-        mkdir -p ${{ env.WORKSPACE }} ${{ env.CLANG_DIR }} ${{ env.GCC_ARM64_DIR }} ${{ env.GCC_ARM32_DIR }}
+        mkdir -p ${{ env.WORKSPACE }}
 
     - name: 4. 切换Python2.7（适配4.14内核）
       if: env.SWITCH_PYTHON == 'true'
@@ -83,51 +77,43 @@ jobs:
         sudo ln -s /usr/bin/python2.7 /usr/bin/python
         python --version
 
-    - name: 5. 缓存AOSP编译工具链
+    - name: 5. 缓存NDK完整工具链（Clang+GCC一体）
       id: toolchain-cache
       uses: actions/cache@v4
       with:
-        path: |
-          ${{ env.CLANG_DIR }}
-          ${{ env.GCC_ARM64_DIR }}
-          ${{ env.GCC_ARM32_DIR }}
-        key: ${{ env.CLANG_VERSION }}-aarch64-gcc4.9-arm32-gcc4.9-ndk-r29
+        path: ${{ env.NDK_DIR }}
+        key: ndk-r29-clang21-gcc4.9-full
         restore-keys: |
-          ${{ env.CLANG_VERSION }}-
+          ndk-r29-
 
-    - name: 6. 下载AOSP Clang21.0.0 全LLVM工具链
+    - name: 6. 下载NDK r29完整工具链（仅需下载一次，自带Clang+GCC）
       if: steps.toolchain-cache.outputs.cache-hit != 'true' || inputs.clean_build == true
       run: |
         set -euo pipefail
-        # 下载Clang21.0.0(NDK r29)，主链接为你指定的地址，失败自动切换备用镜像
-        echo "正在下载AOSP Clang ${{ env.CLANG_VERSION }}..."
-        if ! wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.CLANG_URL }} -O ndk-clang.zip; then
+        cd ${{ env.WORKSPACE }}
+        # 下载你指定的NDK包，主链接失败自动切换备用镜像
+        echo "正在下载NDK r29（内置Clang21.0.0 + ARM64/ARM32 GCC工具链）..."
+        if ! wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.NDK_URL }} -O ndk-r29-linux.zip; then
           echo "主链接下载失败，切换备用GitHub镜像..."
-          wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.CLANG_MIRROR_URL }} -O ndk-clang.zip
+          wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.NDK_MIRROR_URL }} -O ndk-r29-linux.zip
         fi
-        # 解压并提取Clang工具链
-        unzip -q ndk-clang.zip -d ndk-temp
-        # 适配NDK r29的目录结构，提取完整LLVM工具链
-        mv ndk-temp/android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/* ${{ env.CLANG_DIR }}
-        rm -rf ndk-temp ndk-clang.zip
+        # 解压完整NDK包
+        unzip -q ndk-r29-linux.zip
+        rm -f ndk-r29-linux.zip
 
-        # 下载并解压ARM64 GCC兼容工具链
-        echo "正在下载ARM64 GCC兼容工具链..."
-        wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.GCC_ARM64_URL }} -O gcc-arm64.tar.gz
-        tar -xzf gcc-arm64.tar.gz -C ${{ env.GCC_ARM64_DIR }} --strip-components=1
-        rm -f gcc-arm64.tar.gz
-
-        # 下载并解压ARM32 GCC兼容工具链
-        echo "正在下载ARM32 GCC兼容工具链..."
-        wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.GCC_ARM32_URL }} -O gcc-arm32.tar.gz
-        tar -xzf gcc-arm32.tar.gz -C ${{ env.GCC_ARM32_DIR }} --strip-components=1
-        rm -f gcc-arm32.tar.gz
-
-        # 验证编译器可用性与版本
-        chmod +x ${{ env.CLANG_DIR }}/bin/*
-        echo "===== 编译器版本验证 ====="
-        ${{ env.CLANG_DIR }}/bin/clang --version | head -n 2
-        ${{ env.CLANG_DIR }}/bin/ld.lld --version | head -n 1
+        # 验证所有工具链可用性
+        chmod +x ${{ env.NDK_DIR }}/toolchains/llvm/prebuilt/linux-x86_64/bin/*
+        chmod +x ${{ env.NDK_DIR }}/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin/*
+        chmod +x ${{ env.NDK_DIR }}/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin/*
+        
+        echo "===== 工具链版本验证 ====="
+        # 验证Clang版本
+        ${{ env.NDK_DIR }}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --version | head -n 2
+        ${{ env.NDK_DIR }}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld --version | head -n 1
+        # 验证ARM64 GCC版本
+        ${{ env.NDK_DIR }}/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin/aarch64-linux-android-gcc --version | head -n 1
+        # 验证ARM32 GCC版本
+        ${{ env.NDK_DIR }}/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin/arm-linux-androideabi-gcc --version | head -n 1
 
     - name: 7. 缓存内核源码
       id: kernel-source-cache
@@ -209,8 +195,12 @@ jobs:
       run: |
         set -euo pipefail
         cd ${{ env.KERNEL_DIR }}
-        # 导入工具链PATH
-        export PATH="${{ env.CLANG_DIR }}/bin:${{ env.GCC_ARM64_DIR }}/bin:${{ env.GCC_ARM32_DIR }}/bin:$PATH"
+        # 导入完整工具链PATH（Clang+ARM64 GCC+ARM32 GCC）
+        export PATH="\
+        ${{ env.NDK_DIR }}/toolchains/llvm/prebuilt/linux-x86_64/bin:\
+        ${{ env.NDK_DIR }}/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin:\
+        ${{ env.NDK_DIR }}/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin:\
+        $PATH"
         # 生成defconfig配置
         make O=out ARCH=${{ env.ARCH }} ${{ env.KERNEL_CONFIG }}
 
@@ -218,8 +208,12 @@ jobs:
       run: |
         set -euo pipefail
         cd ${{ env.KERNEL_DIR }}
-        # 全LLVM工具链环境变量（完全匹配你的编译器要求）
-        export PATH="${{ env.CLANG_DIR }}/bin:${{ env.GCC_ARM64_DIR }}/bin:${{ env.GCC_ARM32_DIR }}/bin:$PATH"
+        # 完整工具链环境变量（完全匹配你的编译器要求）
+        export PATH="\
+        ${{ env.NDK_DIR }}/toolchains/llvm/prebuilt/linux-x86_64/bin:\
+        ${{ env.NDK_DIR }}/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin:\
+        ${{ env.NDK_DIR }}/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin:\
+        $PATH"
         export ARCH=${{ env.ARCH }}
         export CC="ccache clang"
         export CXX="ccache clang++"
