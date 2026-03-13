@@ -168,49 +168,35 @@ jobs:
         ./add-lxc-docker-custom3.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
 
-    - name: 10. 添加runc补丁
+    - name: 添加runc补丁
       run: |
-        set -euo pipefail
-        cd ${{ env.WORKSPACE }}
-        # 修复：补丁下载双地址兜底
-        if ! wget --retry-connrefused --tries=5 --waitretry=3 \
-          https://github.com/fate-think/LXC-DOCKER-KernelSU_Action/releases/download/1.0.0/runcpatch.sh; then
-          echo "主地址下载失败，切换备用jsdelivr镜像..."
-          wget --retry-connrefused --tries=5 --waitretry=3 \
-            https://cdn.jsdelivr.net/gh/fate-think/LXC-DOCKER-KernelSU_Action@main/runcpatch.sh
-        fi
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        wget https://github.com/ego-taboo/LXC-DOCKER-KernelSU_Action/releases/download/1.0.0/runcpatch.sh
         chmod a+x runcpatch.sh
-        # 兼容4.14内核的cgroup路径
-        if [ -f ${{ env.KERNEL_DIR }}/kernel/cgroup.c ]; then
-          ./runcpatch.sh ${{ env.KERNEL_DIR }}/kernel/cgroup.c
-        elif [ -f ${{ env.KERNEL_DIR }}/kernel/cgroup/cgroup.c ]; then
-          ./runcatch.sh ${{ env.KERNEL_DIR }}/kernel/cgroup/cgroup.c
-        else
-          echo "警告：未找到cgroup文件，跳过runc补丁"
+        if [ -f android-kernel/kernel/cgroup.c ]; then
+        ./runcpatch.sh android-kernel/kernel/cgroup.c               
         fi
+        if [ -f android-kernel/kernel/cgroup/cgroup.c ]; then
+        ./runcpatch.sh android-kernel/kernel/cgroup/cgroup.c               
+        fi
+    
+   
 
-    - name: 11. 集成KernelSU（按需）
+    - name: 配置 ksu
       if: env.ENABLE_KERNELSU == 'true'
       run: |
-        set -euo pipefail
-        cd ${{ env.KERNEL_DIR }}
-        # 修复：KernelSU脚本双地址兜底，解决空内容问题
-        if ! curl -LSs --retry 5 --retry-delay 3 \
-          "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}; then
-          echo "主地址获取失败，切换备用fastgit镜像..."
-          curl -LSs --retry 5 --retry-delay 3 \
-            "https://raw.fastgit.org/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}
-        fi
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}
 
-    - name: 12. 开启KVM虚拟化支持（按需）
+    - name: 开启kvm
       if: env.ENABLE_KVM == 'true'
       run: |
-        set -euo pipefail
-        CONFIG_FILE=${{ env.KERNEL_DIR }}/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-        echo "CONFIG_VIRTUALIZATION=y" >> $CONFIG_FILE
-        echo "CONFIG_KVM=y" >> $CONFIG_FILE
-        echo "CONFIG_VHOST_NET=y" >> $CONFIG_FILE
-        echo "CONFIG_VHOST_CROSS_ENDIAN_LEGACY=y" >> $CONFIG_FILE
+         cd $GITHUB_WORKSPACE/kernel_workspace
+         echo "CONFIG_VIRTUALIZATION=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+         echo "CONFIG_KVM=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+         echo "CONFIG_VHOST_NET=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+         echo "CONFIG_VHOST_CROSS_ENDIAN_LEGACY=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+               
 
     - name: 13. 高版本Clang编译适配（4.14内核）
       run: |
