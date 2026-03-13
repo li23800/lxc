@@ -18,11 +18,14 @@ env:
   DEVICE_CODENAME: hotdog
   DEVICE_NAME: OnePlus7TPro
   ARCH: arm64
-  # 编译器配置（完全匹配你的内核参数）
+  # 编译器配置（完全匹配你的内核参数，改用稳定可访问的NDK源）
   CLANG_VERSION: clang-r563880c
-  CLANG_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r563880c.tar.gz
-  GCC_ARM64_URL: https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/main.tar.gz
-  GCC_ARM32_URL: https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/heads/main.tar.gz
+  # 主下载链接：Android NDK r29 内置Clang 21.0.0，和r563880c完全匹配
+  CLANG_URL: https://dl.google.com/android/repository/android-ndk-r29-linux-x86_64.zip
+  CLANG_MIRROR_URL: https://github.com/android/ndk/releases/download/r29/android-ndk-r29-linux-x86_64.zip
+  # 备用兼容工具链链接（稳定可访问）
+  GCC_ARM64_URL: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/archive/refs/heads/lineage-20.0.tar.gz
+  GCC_ARM32_URL: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/archive/refs/heads/lineage-20.0.tar.gz
   # 目录配置
   WORKSPACE: ${{ github.workspace }}/kernel_workspace
   CLANG_DIR: ${{ github.workspace }}/kernel_workspace/clang-aosp
@@ -68,7 +71,7 @@ jobs:
           git make bc bison ccache openssl zip kmod cpio flex libelf-dev \
           curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates \
           python3 python2.7 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
-          software-properties-common libncurses5-dev libtinfo5
+          software-properties-common libncurses5-dev libtinfo5 unzip
         mkdir -p ${{ env.WORKSPACE }} ${{ env.CLANG_DIR }} ${{ env.GCC_ARM64_DIR }} ${{ env.GCC_ARM32_DIR }}
 
     - name: 4. 切换Python2.7（适配4.14内核）
@@ -87,7 +90,7 @@ jobs:
           ${{ env.CLANG_DIR }}
           ${{ env.GCC_ARM64_DIR }}
           ${{ env.GCC_ARM32_DIR }}
-        key: ${{ env.CLANG_VERSION }}-aarch64-gcc4.9-arm32-gcc4.9
+        key: ${{ env.CLANG_VERSION }}-aarch64-gcc4.9-arm32-gcc4.9-ndk-r29
         restore-keys: |
           ${{ env.CLANG_VERSION }}-
 
@@ -95,22 +98,27 @@ jobs:
       if: steps.toolchain-cache.outputs.cache-hit != 'true' || inputs.clean_build == true
       run: |
         set -euo pipefail
-        # 下载并解压Clang21.0.0(r563880c)
+        # 下载Clang21.0.0(NDK r29)，主链接失败自动切换备用镜像
         echo "正在下载AOSP Clang ${{ env.CLANG_VERSION }}..."
-        wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.CLANG_URL }} -O clang.tar.gz
-        tar -xzf clang.tar.gz -C ${{ env.CLANG_DIR }}
-        rm -f clang.tar.gz
+        if ! wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.CLANG_URL }} -O ndk-clang.zip; then
+          echo "主链接下载失败，切换备用镜像..."
+          wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.CLANG_MIRROR_URL }} -O ndk-clang.zip
+        fi
+        # 解压并提取Clang工具链
+        unzip -q ndk-clang.zip -d ndk-temp
+        mv ndk-temp/android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/* ${{ env.CLANG_DIR }}
+        rm -rf ndk-temp ndk-clang.zip
 
         # 下载并解压ARM64 GCC兼容工具链
         echo "正在下载ARM64 GCC兼容工具链..."
         wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.GCC_ARM64_URL }} -O gcc-arm64.tar.gz
-        tar -xzf gcc-arm64.tar.gz -C ${{ env.GCC_ARM64_DIR }}
+        tar -xzf gcc-arm64.tar.gz -C ${{ env.GCC_ARM64_DIR }} --strip-components=1
         rm -f gcc-arm64.tar.gz
 
         # 下载并解压ARM32 GCC兼容工具链
         echo "正在下载ARM32 GCC兼容工具链..."
         wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.GCC_ARM32_URL }} -O gcc-arm32.tar.gz
-        tar -xzf gcc-arm32.tar.gz -C ${{ env.GCC_ARM32_DIR }}
+        tar -xzf gcc-arm32.tar.gz -C ${{ env.GCC_ARM32_DIR }} --strip-components=1
         rm -f gcc-arm32.tar.gz
 
         # 验证编译器可用性与版本
@@ -316,4 +324,3 @@ jobs:
         name: 编译日志
         path: ${{ env.KERNEL_DIR }}/out/build.log
         retention-days: 30
-
