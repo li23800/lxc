@@ -162,18 +162,11 @@ jobs:
     - name: 9. 开启LXC/Docker支持（按需）
       if: env.ENABLE_LXC_DOCKER == 'true'
       run: |
-        set -euo pipefail
-        cd ${{ env.WORKSPACE }}
-        # 修复：脚本下载双地址兜底，解决解析失败
-        if ! wget --retry-connrefused --tries=5 --waitretry=3 \
-          https://github.com/fate-think/LXC-DOCKER-KernelSU_Action/releases/download/1.0.0/add-lxc-docker-custom.sh; then
-          echo "主地址下载失败，切换备用jsdelivr镜像..."
-          wget --retry-connrefused --tries=5 --waitretry=3 \
-            https://cdn.jsdelivr.net/gh/fate-think/LXC-DOCKER-KernelSU_Action@main/add-lxc-docker-custom.sh
-        fi
-        chmod 755 add-lxc-docker-custom.sh
-        ./add-lxc-docker-custom.sh ${{ env.KERNEL_DIR }}/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-        echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> ${{ env.KERNEL_DIR }}/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        wget https://github.com/ego-taboo/LXC-DOCKER-KernelSU_Action/releases/download/2.0.0/add-lxc-docker-custom3.sh
+        chmod 755 add-lxc-docker-custom3.sh
+        ./add-lxc-docker-custom3.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
 
     - name: 10. 添加runc补丁
       run: |
