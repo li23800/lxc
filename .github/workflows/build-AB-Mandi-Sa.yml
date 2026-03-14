@@ -167,7 +167,19 @@ jobs:
         chmod 755 add-lxc-docker-custom3.sh
         ./add-lxc-docker-custom3.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-
+    - name: 编译适配4.14内核的DTC工具
+      run: |
+          # 克隆内核官方维护的DTC源码仓库
+          git clone git://git.kernel.org/pub/scm/utils/dtc/dtc.git
+          cd dtc
+          # 切换到4.14内核完全兼容的v1.4.6版本
+          git checkout v1.4.6
+          # 编译生成dtc二进制
+          make -j$(nproc)
+          # 验证版本，确认编译成功
+          ./dtc --version
+          # 回到工作目录
+          cd $GITHUB_WORKSPACE
     - name: 添加runc补丁
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
@@ -250,18 +262,12 @@ jobs:
         export KBUILD_BUILD_HOST=OnePlus7TPro
         export KBUILD_BUILD_USER=openela-kernel
          
-         make ARCH=arm64 LLVM=1 scripts
-          
-          # 验证步骤：打印版本，确认dtc生成成功，区分内置版本和系统版本
-          echo "=== 内核自带DTC版本 ==="
-          ./scripts/dtc/dtc --version
-          echo "=== 系统自带DTC版本 ==="
-          dtc --version || echo "系统未安装dtc"
+         
         # 基础编译参数
         MAKE_ARGS=(
           -j$(nproc --all)
           O=out
-          DTC=./out/scripts/dtc/dtc
+          DTC=./dtc/dtc
           ARCH=${{ env.ARCH }}
           CONFIG_DEBUG_SECTION_MISMATCH=y
           # 全LLVM工具链强制启用
