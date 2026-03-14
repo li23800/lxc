@@ -175,7 +175,7 @@ jobs:
           # 切换到4.14内核完全兼容的v1.4.6版本
           git checkout v1.4.6
           # 编译生成dtc二进制
-          make -j$(nproc)
+          make -j$(nproc) CC=gcc
           # 验证版本，确认编译成功
           ./dtc --version
           # 回到工作目录
