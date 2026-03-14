@@ -227,14 +227,8 @@ jobs:
       run: |
           # 仅编译scripts目录，生成dtc等主机工具，不编译整个内核，速度极快
           # 必须和正式编译的ARCH/LLVM/工具链参数完全一致
-          cd ${{ env.KERNEL_DIR }}
-          make ARCH=arm64 LLVM=1 scripts
+    
           
-          # 验证步骤：打印版本，确认dtc生成成功，区分内置版本和系统版本
-          echo "=== 内核自带DTC版本 ==="
-          ./scripts/dtc/dtc --version
-          echo "=== 系统自带DTC版本 ==="
-          dtc --version || echo "系统未安装dtc"
     - name: 16. 执行内核编译（全LLVM工具链）
       run: |
         set -euo pipefail
@@ -247,7 +241,6 @@ jobs:
         export LD=ld.lld
         export AR=llvm-ar
         export NM=llvm-nm
-        export DTC=./out/scripts/dtc/dtc
         export OBJCOPY=llvm-objcopy
         export OBJDUMP=llvm-objdump
         export STRIP=llvm-strip
@@ -256,11 +249,19 @@ jobs:
         export CROSS_COMPILE_ARM32=arm-linux-androideabi-
         export KBUILD_BUILD_HOST=OnePlus7TPro
         export KBUILD_BUILD_USER=openela-kernel
-
+         
+         make ARCH=arm64 LLVM=1 scripts
+          
+          # 验证步骤：打印版本，确认dtc生成成功，区分内置版本和系统版本
+          echo "=== 内核自带DTC版本 ==="
+          ./scripts/dtc/dtc --version
+          echo "=== 系统自带DTC版本 ==="
+          dtc --version || echo "系统未安装dtc"
         # 基础编译参数
         MAKE_ARGS=(
           -j$(nproc --all)
           O=out
+          DTC=./out/scripts/dtc/dtc
           ARCH=${{ env.ARCH }}
           CONFIG_DEBUG_SECTION_MISMATCH=y
           # 全LLVM工具链强制启用
