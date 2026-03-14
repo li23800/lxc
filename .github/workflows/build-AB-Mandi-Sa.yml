@@ -107,7 +107,7 @@ jobs:
         restore-keys: |
           ${{ env.CLANG_VERSION }}-
 
-    - name: 6. 下载AOSP Clang21.0.0 全LLVM工具链 + GCC兼容工具链 + DTC 1.4.6（修复解析失败问题）
+    - name: 6. 下载AOSP Clang21.0.0 全LLVM工具链 + GCC兼容工具链 + DTC 1.4.6（修复编译报错）
       if: steps.toolchain-cache.outputs.cache-hit != 'true' || inputs.clean_build == true
       run: |
         set -euo pipefail
@@ -144,7 +144,7 @@ jobs:
           rm -rf gcc-arm32-temp gcc-arm32.tar.gz
         fi
 
-        # 4. 下载并编译 DTC 1.4.6 设备树编译器（双地址兜底，适配内核设备树编译）
+        # 4. 下载并编译 DTC 1.4.6 设备树编译器（修复高版本GCC编译报错）
         echo "正在下载并编译 DTC ${{ env.DTC_VERSION }}..."
         if ! wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.DTC_URL }} -O dtc.tar.gz; then
           echo "DTC主链接下载失败，切换备用GitHub镜像..."
@@ -153,9 +153,9 @@ jobs:
         # 解压源码
         mkdir -p dtc-temp
         tar -zxf dtc.tar.gz -C dtc-temp --strip-components=1
-        # 编译DTC（主机工具，禁用Python绑定，避免版本兼容问题）
+        # 编译DTC：关闭WERROR，禁用Python绑定，忽略数组越界警告，适配高版本GCC
         cd dtc-temp
-        make -j$(nproc --all) NO_PYTHON=1
+        make -j$(nproc --all) NO_PYTHON=1 WERROR=0 EXTRA_CFLAGS="-Wno-array-bounds"
         # 复制编译好的二进制到指定目录
         cp dtc ${{ env.DTC_DIR }}/
         cd ..
