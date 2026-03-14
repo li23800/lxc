@@ -31,6 +31,13 @@ env:
   # ARM32 GCC 4.9 工具链（32位兼容库编译必备）
   GCC_ARM32_REPO: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git
   GCC_ARM32_TAR_URL: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/archive/refs/heads/lineage-18.1.tar.gz
+  # ========== 新增：DTC 1.4.6 设备树编译器配置 ==========
+  DTC_VERSION: dtc-v1.4.6
+  # 主下载地址：kernel.org 官方源码包，稳定可靠
+  DTC_URL: https://git.kernel.org/pub/scm/utils/dtc/dtc.git/snapshot/dtc-v1.4.6.tar.gz
+  # 备用镜像地址：GitHub 官方仓库镜像，主链接失败时自动兜底
+  DTC_MIRROR_URL: https://github.com/dgibson/dtc/archive/refs/tags/v1.4.6.tar.gz
+  DTC_DIR: ${{ github.workspace }}/kernel_workspace/dtc-1.4.6
   # 目录配置
   WORKSPACE: ${{ github.workspace }}/kernel_workspace
   CLANG_DIR: ${{ github.workspace }}/kernel_workspace/clang-aosp
@@ -71,13 +78,13 @@ jobs:
         # 启用universe仓库，兼容Python2.7
         sudo add-apt-repository universe -y
         sudo apt-get update -y
-        # 安装全量依赖，适配AOSP Clang21与4.14内核
+        # 安装全量依赖，适配AOSP Clang21与4.14内核，含DTC编译所需依赖
         sudo -E apt-get -y -qq install --no-install-recommends \
           git make bc bison ccache openssl zip kmod cpio flex libelf-dev \
           curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates \
           python3 python2.7 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
           software-properties-common libncurses5-dev libtinfo5 unzip tar
-        mkdir -p ${{ env.WORKSPACE }} ${{ env.CLANG_DIR }} ${{ env.GCC_ARM64_DIR }} ${{ env.GCC_ARM32_DIR }}
+        mkdir -p ${{ env.WORKSPACE }} ${{ env.CLANG_DIR }} ${{ env.GCC_ARM64_DIR }} ${{ env.GCC_ARM32_DIR }} ${{ env.DTC_DIR }}
 
     - name: 4. 切换Python2.7（适配4.14内核）
       if: env.SWITCH_PYTHON == 'true'
@@ -87,7 +94,7 @@ jobs:
         sudo ln -s /usr/bin/python2.7 /usr/bin/python
         python --version
 
-    - name: 5. 缓存AOSP编译工具链
+    - name: 5. 缓存AOSP编译工具链（含DTC）
       id: toolchain-cache
       uses: actions/cache@v4
       with:
@@ -95,11 +102,12 @@ jobs:
           ${{ env.CLANG_DIR }}
           ${{ env.GCC_ARM64_DIR }}
           ${{ env.GCC_ARM32_DIR }}
-        key: ${{ env.CLANG_VERSION }}-aarch64-gcc4.9-arm32-gcc4.9-git-fix
+          ${{ env.DTC_DIR }}
+        key: ${{ env.CLANG_VERSION }}-aarch64-gcc4.9-arm32-gcc4.9-dtc1.4.6-git-fix
         restore-keys: |
           ${{ env.CLANG_VERSION }}-
 
-    - name: 6. 下载AOSP Clang21.0.0 全LLVM工具链 + GCC兼容工具链（修复解析失败问题）
+    - name: 6. 下载AOSP Clang21.0.0 全LLVM工具链 + GCC兼容工具链 + DTC 1.4.6（修复解析失败问题）
       if: steps.toolchain-cache.outputs.cache-hit != 'true' || inputs.clean_build == true
       run: |
         set -euo pipefail
@@ -136,13 +144,32 @@ jobs:
           rm -rf gcc-arm32-temp gcc-arm32.tar.gz
         fi
 
-        # 4. 验证所有工具链可用性与版本
-        chmod +x ${{ env.CLANG_DIR }}/bin/* ${{ env.GCC_ARM64_DIR }}/bin/* ${{ env.GCC_ARM32_DIR }}/bin/*
-        echo "===== 编译器版本验证 ====="
+        # 4. 下载并编译 DTC 1.4.6 设备树编译器（双地址兜底，适配内核设备树编译）
+        echo "正在下载并编译 DTC ${{ env.DTC_VERSION }}..."
+        if ! wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.DTC_URL }} -O dtc.tar.gz; then
+          echo "DTC主链接下载失败，切换备用GitHub镜像..."
+          wget --retry-connrefused --tries=5 --waitretry=3 ${{ env.DTC_MIRROR_URL }} -O dtc.tar.gz
+        fi
+        # 解压源码
+        mkdir -p dtc-temp
+        tar -zxf dtc.tar.gz -C dtc-temp --strip-components=1
+        # 编译DTC（主机工具，禁用Python绑定，避免版本兼容问题）
+        cd dtc-temp
+        make -j$(nproc --all) NO_PYTHON=1
+        # 复制编译好的二进制到指定目录
+        cp dtc ${{ env.DTC_DIR }}/
+        cd ..
+        # 清理临时文件
+        rm -rf dtc-temp dtc.tar.gz
+
+        # 5. 验证所有工具链可用性与版本
+        chmod +x ${{ env.CLANG_DIR }}/bin/* ${{ env.GCC_ARM64_DIR }}/bin/* ${{ env.GCC_ARM32_DIR }}/bin/* ${{ env.DTC_DIR }}/dtc
+        echo "===== 编译器与工具链版本验证 ====="
         ${{ env.CLANG_DIR }}/bin/clang --version | head -n 2
         ${{ env.CLANG_DIR }}/bin/ld.lld --version | head -n 1
         ${{ env.GCC_ARM64_DIR }}/bin/aarch64-linux-android-gcc --version | head -n 1
         ${{ env.GCC_ARM32_DIR }}/bin/arm-linux-androideabi-gcc --version | head -n 1
+        ${{ env.DTC_DIR }}/dtc --version | head -n 1
 
     - name: 7. 缓存内核源码
       id: kernel-source-cache
@@ -219,23 +246,17 @@ jobs:
       run: |
         set -euo pipefail
         cd ${{ env.KERNEL_DIR }}
-        # 导入工具链PATH
-        export PATH="${{ env.CLANG_DIR }}/bin:${{ env.GCC_ARM64_DIR }}/bin:${{ env.GCC_ARM32_DIR }}/bin:$PATH"
-        # 生成defconfig配置
-        make O=out ARCH=${{ env.ARCH }} ${{ env.KERNEL_CONFIG }}
+        # 导入工具链PATH（含DTC）
+        export PATH="${{ env.DTC_DIR }}:${{ env.CLANG_DIR }}/bin:${{ env.GCC_ARM64_DIR }}/bin:${{ env.GCC_ARM32_DIR }}/bin:$PATH"
+        # 生成defconfig配置，强制使用指定DTC
+        make O=out ARCH=${{ env.ARCH }} DTC=${{ env.DTC_DIR }}/dtc ${{ env.KERNEL_CONFIG }}
 
-    - name: 预编译主机工具（生成内置DTC）
-      run: |
-          # 仅编译scripts目录，生成dtc等主机工具，不编译整个内核，速度极快
-          # 必须和正式编译的ARCH/LLVM/工具链参数完全一致
-    
-          
-    - name: 16. 执行内核编译（全LLVM工具链）
+    - name: 16. 执行内核编译（全LLVM工具链，强制使用DTC 1.4.6）
       run: |
         set -euo pipefail
         cd ${{ env.KERNEL_DIR }}
-        # 全LLVM工具链环境变量（完全匹配你的编译器要求）
-        export PATH="${{ env.CLANG_DIR }}/bin:${{ env.GCC_ARM64_DIR }}/bin:${{ env.GCC_ARM32_DIR }}/bin:$PATH"
+        # 全LLVM工具链环境变量（含DTC 1.4.6）
+        export PATH="${{ env.DTC_DIR }}:${{ env.CLANG_DIR }}/bin:${{ env.GCC_ARM64_DIR }}/bin:${{ env.GCC_ARM32_DIR }}/bin:$PATH"
         export ARCH=${{ env.ARCH }}
         export CC="ccache clang"
         export CXX="ccache clang++"
@@ -256,12 +277,13 @@ jobs:
         MAKE_ARGS=(
           -j$(nproc --all)
           O=out
-        
           ARCH=${{ env.ARCH }}
           CONFIG_DEBUG_SECTION_MISMATCH=y
           # 全LLVM工具链强制启用
           LLVM=1
           LLVM_IAS=1
+          # 强制使用我们编译的 DTC 1.4.6 版本
+          DTC=${{ env.DTC_DIR }}/dtc
         )
 
         # 内核优化参数（匹配你的LTO/PGO/MLGO特征）
@@ -287,7 +309,7 @@ jobs:
           echo "编译失败：未生成内核镜像，请检查日志"
           exit 1
         fi
-        echo "✅ 内核编译成功，镜像已生成"
+        echo "✅ 内核编译成功，镜像已生成，设备树使用DTC 1.4.6编译"
 
     - name: 17. 制作AnyKernel3刷入包（适配OnePlus7T Pro）
       run: |
@@ -301,7 +323,7 @@ jobs:
         cd AnyKernel3
 
         # 适配OnePlus7T Pro专属配置（防刷错机型）
-        sed -i "s/kernel.string=.*/kernel.string=OnePlus7TPro OpenELA Kernel | Clang21.0.0/g" anykernel.sh
+        sed -i "s/kernel.string=.*/kernel.string=OnePlus7TPro OpenELA Kernel | Clang21.0.0 | DTC1.4.6/g" anykernel.sh
         sed -i "s/do.devicecheck=0/do.devicecheck=1/g" anykernel.sh
         sed -i "s/device.name1=.*/device.name1=${{ env.DEVICE_CODENAME }}/g" anykernel.sh
         sed -i "s/device.name2=.*/device.name2=${{ env.DEVICE_NAME }}/g" anykernel.sh
