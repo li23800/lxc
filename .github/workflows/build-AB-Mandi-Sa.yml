@@ -167,19 +167,16 @@ jobs:
         chmod 755 add-lxc-docker-custom3.sh
         ./add-lxc-docker-custom3.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-    - name: 编译适配4.14内核的DTC工具
+    - name: 下载适配4.14内核的DTC v1.4.6预编译工具
       run: |
-          # 克隆内核官方维护的DTC源码仓库
-          git clone git://git.kernel.org/pub/scm/utils/dtc/dtc.git
-          cd dtc
-          # 切换到4.14内核完全兼容的v1.4.6版本
-          git checkout v1.4.6
-          # 编译生成dtc二进制
-          make -j$(nproc) CC=gcc
-          # 验证版本，确认编译成功
-          ./dtc --version
-          # 回到工作目录
-          cd $GITHUB_WORKSPACE
+            # 下载官方源码包，用GCC快速编译（也可直接下载静态二进制）
+            wget https://mirrors.edge.kernel.org/pub/linux/utils/dtc/dtc-1.4.6.tar.xz
+            tar -xJf dtc-1.4.6.tar.xz
+            cd dtc-1.4.6
+            make -j$(nproc) CC=gcc
+            ./dtc --version
+            cd $GITHUB_WORKSPACE
+
     - name: 添加runc补丁
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
