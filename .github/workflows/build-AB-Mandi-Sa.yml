@@ -246,7 +246,7 @@ jobs:
         export LD=ld.lld
         export AR=llvm-ar
         export NM=llvm-nm
-        export DTC=./scripts/dtc/dtc
+        export DTC=./out/scripts/dtc/dtc
         export OBJCOPY=llvm-objcopy
         export OBJDUMP=llvm-objdump
         export STRIP=llvm-strip
