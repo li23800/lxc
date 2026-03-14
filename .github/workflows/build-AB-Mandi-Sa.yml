@@ -227,6 +227,7 @@ jobs:
       run: |
           # 仅编译scripts目录，生成dtc等主机工具，不编译整个内核，速度极快
           # 必须和正式编译的ARCH/LLVM/工具链参数完全一致
+          cd ${{ env.KERNEL_DIR }}
           make ARCH=arm64 LLVM=1 scripts
           
           # 验证步骤：打印版本，确认dtc生成成功，区分内置版本和系统版本
