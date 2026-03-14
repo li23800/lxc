@@ -223,6 +223,17 @@ jobs:
         # 生成defconfig配置
         make O=out ARCH=${{ env.ARCH }} ${{ env.KERNEL_CONFIG }}
 
+    - name: 预编译主机工具（生成内置DTC）
+      run: |
+          # 仅编译scripts目录，生成dtc等主机工具，不编译整个内核，速度极快
+          # 必须和正式编译的ARCH/LLVM/工具链参数完全一致
+          make ARCH=arm64 LLVM=1 scripts
+          
+          # 验证步骤：打印版本，确认dtc生成成功，区分内置版本和系统版本
+          echo "=== 内核自带DTC版本 ==="
+          ./scripts/dtc/dtc --version
+          echo "=== 系统自带DTC版本 ==="
+          dtc --version || echo "系统未安装dtc"
     - name: 16. 执行内核编译（全LLVM工具链）
       run: |
         set -euo pipefail
@@ -235,6 +246,7 @@ jobs:
         export LD=ld.lld
         export AR=llvm-ar
         export NM=llvm-nm
+        export DTC=./scripts/dtc/dtc
         export OBJCOPY=llvm-objcopy
         export OBJDUMP=llvm-objdump
         export STRIP=llvm-strip
