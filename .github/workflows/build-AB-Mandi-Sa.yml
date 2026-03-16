@@ -209,11 +209,11 @@ jobs:
         echo "CONFIG_SMP=y" >> $CONFIG_FILE
         echo "CONFIG_PREEMPT=y" >> $CONFIG_FILE
 
-    - name: 14. 配置ccache编译缓存
-      uses: hendrikmuhs/ccache-action@v1.2
-      with:
-        key: build-kernel-${{ env.DEVICE_CODENAME }}-clang21
-        max-size: 3G
+          # - name: 14. 配置ccache编译缓存
+          # uses: hendrikmuhs/ccache-action@v1.2
+          # with:
+          #  key: build-kernel-${{ env.DEVICE_CODENAME }}-clang21
+          #  max-size: 3G
 
     - name: 15. 生成内核编译配置
       run: |
@@ -237,8 +237,8 @@ jobs:
         # 全LLVM工具链环境变量（完全匹配你的编译器要求）
         export PATH="${{ env.CLANG_DIR }}/bin:${{ env.GCC_ARM64_DIR }}/bin:${{ env.GCC_ARM32_DIR }}/bin:$PATH"
         export ARCH=${{ env.ARCH }}
-        export CC="ccache clang"
-        export CXX="ccache clang++"
+        export CC=clang
+        export CXX=clang++
         export LD=ld.lld
         export AR=llvm-ar
         export NM=llvm-nm
